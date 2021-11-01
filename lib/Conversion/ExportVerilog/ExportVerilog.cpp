@@ -19,6 +19,7 @@
 #include "circt/Dialect/HW/HWAttributes.h"
 #include "circt/Dialect/HW/HWTypes.h"
 #include "circt/Dialect/HW/HWVisitors.h"
+#include "circt/Dialect/SV/SVAttributes.h"
 #include "circt/Dialect/SV/SVVisitors.h"
 #include "circt/Support/LLVM.h"
 #include "circt/Support/LoweringOptions.h"
@@ -423,6 +424,26 @@ static bool emitComment(raw_ostream &os, Operation *op) {
     return false;
 
   os << "// " << comment.getText().getValue() << "\n";
+  return true;
+}
+
+static bool emitAttribute(raw_ostream &os, Operation *op) {
+  auto attribute = op->getAttrOfType<ArrayAttr>("attribute_instances");
+  if (!attribute)
+    return false;
+
+  os << "(* ";
+  bool first = true;
+  for (auto a : attribute) {
+    if (!first)
+      os << ", ";
+    auto b = a.cast<sv::AttributeAttr>();
+    os << b.getName().getValue();
+    if (auto expression = b.getExpression())
+      os << "=" << expression.getValue();
+    first = false;
+  }
+  os << " *)";
   return true;
 }
 
@@ -3598,6 +3619,8 @@ void ModuleEmitter::emitHWModule(HWModuleOp module) {
   moduleOpSet.insert(module);
 
   emitComment(os, module);
+  if (emitAttribute(os, module))
+    os << "\n";
 
   os << "module " << getVerilogModuleName(module);
 
