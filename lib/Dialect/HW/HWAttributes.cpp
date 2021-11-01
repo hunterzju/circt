@@ -182,6 +182,21 @@ FileListAttr FileListAttr::getFromFilename(MLIRContext *context,
 }
 
 //===----------------------------------------------------------------------===//
+// CommentAttr
+//===----------------------------------------------------------------------===//
+
+Attribute CommentAttr::parse(DialectAsmParser &p, Type type) {
+  StringAttr text;
+  if (p.parseLess() || p.parseAttribute<StringAttr>(text) || p.parseGreater())
+    return Attribute();
+  return CommentAttr::get(p.getContext(), text);
+}
+
+void CommentAttr::print(DialectAsmPrinter &p) const {
+  p << getMnemonic() << "<" << getText() << ">";
+}
+
+//===----------------------------------------------------------------------===//
 // InnerRefAttr
 //===----------------------------------------------------------------------===//
 

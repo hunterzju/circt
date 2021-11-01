@@ -119,6 +119,23 @@ def FileListAttr : AttrDef<HWDialect, "FileList"> {
 
 }
 
+/// An attribute used to attach a comment to an operation.  This exists,
+/// independently of things like `sv::VerbatimOP` to anchor a comment and
+/// prevent it becoming detached from its operation.
+def CommentAttr : AttrDef<HWDialect, "Comment"> {
+  let summary = "A comment that is anchored to its attached operation";
+  let mnemonic = "comment";
+  let description = [{
+    This attribute represents a comment anchored to an operation.  It contains
+    raw text that will be inserted as a comment just before the operation it is
+    attached to.  The comment will be prefixed with a comment delimiter
+    appropriate for the backend used (e.g., `//` or `#`).
+
+    A backend may choose to emit this as a block comment.
+  }];
+  let parameters = (ins "::mlir::StringAttr":$text);
+}
+
 /// An attribute describing a module parameter, or instance parameter
 /// specification.
 def ParamDeclAttr : AttrDef<HWDialect, "ParamDecl"> {
