@@ -413,6 +413,19 @@ getLocationInfoAsString(const SmallPtrSet<Operation *, 8> &ops) {
   return sstr.str();
 }
 
+/// Emit an optional hardware comment that may exist as an attribute on an
+/// operation.  Return true if a comment was found (and something was written to
+/// the output stream) and false otherwise.
+static bool emitComment(raw_ostream &os, Operation *op) {
+  auto comment =
+      op->getAttrOfType<hw::CommentAttr>(hw::CommentAttr::getMnemonic());
+  if (!comment)
+    return false;
+
+  os << "// " << comment.getText().getValue() << "\n";
+  return true;
+}
+
 //===----------------------------------------------------------------------===//
 // ModuleNameManager Implementation
 //===----------------------------------------------------------------------===//
@@ -3583,6 +3596,8 @@ void ModuleEmitter::emitHWModule(HWModuleOp module) {
 
   SmallPtrSet<Operation *, 8> moduleOpSet;
   moduleOpSet.insert(module);
+
+  emitComment(os, module);
 
   os << "module " << getVerilogModuleName(module);
 
