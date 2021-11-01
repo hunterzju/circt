@@ -31,6 +31,8 @@ def SVDialect : Dialect {
   let extraClassDeclaration = [{
     /// Register all SV types.
     void registerTypes();
+    /// Register all SV attributes.
+    void registerAttributes();
   }];
 }
 
@@ -58,5 +60,6 @@ include "circt/Dialect/SV/SVInOutOps.td"
 include "circt/Dialect/SV/SVStatements.td"
 include "circt/Dialect/SV/SVVerification.td"
 include "circt/Dialect/SV/SVTypeDecl.td"
+include "circt/Dialect/SV/SVAttributes.td"
 
 #endif // SV_TD

@@ -245,3 +245,11 @@ hw.module @XMR_src(%a : i23) {
   %r = sv.read_inout %xmr1 : !hw.inout<i23>
   sv.assign %xmr1, %a : i23
 }
+
+// CHECK-LABEL: @ModuleWithSVAttributes
+// CHECK-SAME:    #sv.attribute<"moduleWithAttributes">
+// CHECK-SAME:    #sv.attribute<"foo"="bar">
+hw.module @ModuleWithSVAttributes()
+  attributes {attribute_instances = [
+    #sv.attribute<"moduleWithAttributes">,
+    #sv.attribute<"foo"="bar">]} {}
