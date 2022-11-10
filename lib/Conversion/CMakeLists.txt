@@ -18,3 +18,7 @@ add_subdirectory(PipelineToCalyx)
 add_subdirectory(StandardToHandshake)
 add_subdirectory(FSMToSV)
 add_subdirectory(PipelineToHW)
+
+if(CIRCT_SLANG_FRONTEND_ENABLED)
+  add_subdirectory(ImportVerilog)
+endif()
