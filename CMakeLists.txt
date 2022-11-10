@@ -508,6 +508,38 @@ if(CIRCT_BINDINGS_TCL_ENABLED)
 endif()
 
 #-------------------------------------------------------------------------------
+# slang Verilog Frontend
+#-------------------------------------------------------------------------------
+
+option(CIRCT_SLANG_FRONTEND_ENABLED "Enables slang Verilog frontend." OFF)
+option(CIRCT_SLANG_BUILD_FROM_SOURCE "Build slang from source instead of finding an installed package" ON)
+
+llvm_canonicalize_cmake_booleans(CIRCT_SLANG_FRONTEND_ENABLED)
+if(CIRCT_SLANG_FRONTEND_ENABLED)
+  message(STATUS "slang Verilog frontend is enabled")
+  if(CIRCT_SLANG_BUILD_FROM_SOURCE)
+    # Build slang as part of CIRCT (see https://sv-lang.com/building.html)
+    message(STATUS "Building slang from source")
+    include(FetchContent)
+    FetchContent_Declare(
+      slang
+      GIT_REPOSITORY https://github.com/MikePopoloski/slang.git
+      GIT_TAG v2.0
+      GIT_SHALLOW ON)
+    FetchContent_MakeAvailable(slang)
+    # The following feels *very* hacky, but CMake complains about the
+    # CIRCTImportVerilog target linking against slang_slang (even with PRIVATE
+    # linking) without the latter being in an export set. I think we'd want to
+    # statically link slang into the CIRCTImportVerilog library, but seems to be
+    # harder than it ought to be.
+    set_property(GLOBAL APPEND PROPERTY CIRCT_EXPORTS slang_slang fmt unordered_dense)
+    install(TARGETS slang_slang fmt unordered_dense EXPORT CIRCTTargets)
+  else()
+    find_package(slang 2.0 REQUIRED)
+  endif()
+endif()
+
+#-------------------------------------------------------------------------------
 # Directory setup
 #-------------------------------------------------------------------------------
 
