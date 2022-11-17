@@ -21,6 +21,7 @@
 #include "slang/diagnostics/DiagnosticClient.h"
 #include "slang/syntax/SyntaxTree.h"
 #include "slang/text/SourceManager.h"
+#include "slang/driver/Driver.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/Support/SourceMgr.h"
 
@@ -122,13 +123,9 @@ struct DenseMapInfo<slang::BufferID> {
 mlir::OwningOpRef<mlir::ModuleOp> circt::importVerilog(SourceMgr &sourceMgr,
                                                        MLIRContext *context,
                                                        mlir::TimingScope &ts) {
-  // Populate a slang source manager with the source files.
-  // NOTE: This is a bit ugly since we're essentially copying the Verilog source
-  // text in memory. At a later stage we might want to extend slang's
-  // SourceManager such that it can contain non-owned buffers. This will do for
-  // now.
-  slang::SourceManager slangSM;
-  SmallVector<slang::SourceBuffer> slangBuffers;
+  // Use slang's driver which conveniently packages a lot of the things we need
+  // for compilation.
+  slang::driver::Driver driver;
 
   // We keep a separate map from slang's buffers to the original MLIR file name
   // since slang's `SourceLocation::getFileName` returns a modified version that
@@ -139,29 +136,36 @@ mlir::OwningOpRef<mlir::ModuleOp> circt::importVerilog(SourceMgr &sourceMgr,
   // See: https://github.com/MikePopoloski/slang/discussions/658
   SmallDenseMap<slang::BufferID, StringRef> bufferFilePaths;
 
+  auto diagClient = std::make_shared<MlirDiagnosticClient>(
+      context, [&](slang::BufferID id) { return bufferFilePaths.lookup(id); });
+  driver.diagEngine.addClient(diagClient);
+
+  // Populate the source manager with the source files.
+  // NOTE: This is a bit ugly since we're essentially copying the Verilog source
+  // text in memory. At a later stage we might want to extend slang's
+  // SourceManager such that it can contain non-owned buffers. This will do for
+  // now.
   for (unsigned i = 0, e = sourceMgr.getNumBuffers(); i < e; ++i) {
-    const llvm::MemoryBuffer *buffer = sourceMgr.getMemoryBuffer(i + 1);
-    auto slangBuffer =
-        slangSM.assignText(buffer->getBufferIdentifier(), buffer->getBuffer());
-    slangBuffers.push_back(slangBuffer);
-    bufferFilePaths.insert({slangBuffer.id, buffer->getBufferIdentifier()});
+    const llvm::MemoryBuffer *mlirBuffer = sourceMgr.getMemoryBuffer(i + 1);
+    auto slangBuffer = driver.sourceManager.assignText(
+        mlirBuffer->getBufferIdentifier(), mlirBuffer->getBuffer());
+    driver.buffers.push_back(slangBuffer);
+    bufferFilePaths.insert({slangBuffer.id, mlirBuffer->getBufferIdentifier()});
   }
 
   // Parse the input.
   auto parseTimer = ts.nest("Verilog parser");
-  auto syntaxTree =
-      slang::syntax::SyntaxTree::fromBuffers(slangBuffers, slangSM);
+  bool parseSuccess = driver.parseAllSources();
   parseTimer.stop();
 
-  // Emit any diagnostics that got generated during parsing.
-  slang::DiagnosticEngine diagEngine(slangSM);
-  auto diagClient = std::make_shared<MlirDiagnosticClient>(
-      context, [&](slang::BufferID id) { return bufferFilePaths.lookup(id); });
-  diagEngine.addClient(diagClient);
-  for (auto &diag : syntaxTree->diagnostics())
-    diagEngine.issue(diag);
-  if (diagEngine.getNumErrors() > 0)
+  // Elaborate the input.
+  auto compileTimer = ts.nest("Verilog elaboration");
+  auto compilation = driver.createCompilation();
+  for (auto &diag : compilation->getAllDiagnostics())
+    driver.diagEngine.issue(diag);
+  if (!parseSuccess || driver.diagEngine.getNumErrors() > 0)
     return {};
+  compileTimer.stop();
 
   // Traverse the parsed Verilog AST and map it to the equivalent CIRCT ops.
   context->loadDialect<moore::MooreDialect>();

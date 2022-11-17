@@ -9,5 +9,5 @@ endmodule
 // expected-note @+1 {{expanded from macro 'BAR'}}
 `define BAR `FOO
 // expected-error @+1 {{expected identifier}}
-module Foo(`BAR);
+module Bar(`BAR);
 endmodule
