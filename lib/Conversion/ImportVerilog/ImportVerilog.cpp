@@ -21,6 +21,7 @@
 #include "slang/diagnostics/DiagnosticClient.h"
 #include "slang/syntax/SyntaxTree.h"
 #include "slang/text/SourceManager.h"
+#include "llvm/ADT/Hashing.h"
 #include "llvm/Support/SourceMgr.h"
 
 using namespace circt;
@@ -31,11 +32,15 @@ using llvm::SourceMgr;
 // Driver
 //===----------------------------------------------------------------------===//
 
+namespace {
 /// A converter that can be plugged into a slang `DiagnosticEngine` as a client
 /// that will map slang diagnostics to their MLIR counterpart and emit them.
 class MlirDiagnosticClient : public slang::DiagnosticClient {
 public:
-  MlirDiagnosticClient(MLIRContext *context) : context(context) {}
+  MlirDiagnosticClient(
+      MLIRContext *context,
+      std::function<StringRef(slang::BufferID)> getBufferFilePath)
+      : context(context), getBufferFilePath(getBufferFilePath) {}
 
   void report(const slang::ReportedDiagnostic &diag) override {
     // Generate the primary MLIR diagnostic.
@@ -66,7 +71,8 @@ public:
   /// Convert a slang `SourceLocation` to an MLIR `Location`.
   Location convertLocation(slang::SourceLocation loc) const {
     if (loc.buffer() != slang::SourceLocation::NoLocation.buffer()) {
-      auto fileName = sourceManager->getFileName(loc);
+      // auto fileName = sourceManager.getFileName(loc);
+      auto fileName = getBufferFilePath(loc.buffer());
       auto line = sourceManager->getLineNumber(loc);
       auto column = sourceManager->getColumnNumber(loc);
       return FileLineColLoc::get(context, fileName, line, column);
@@ -92,7 +98,25 @@ public:
 
 private:
   MLIRContext *context;
+  std::function<StringRef(slang::BufferID)> getBufferFilePath;
 };
+} // namespace
+
+// Allow for slang::BufferID to be used as hash map keys.
+namespace llvm {
+template <>
+struct DenseMapInfo<slang::BufferID> {
+  static slang::BufferID getEmptyKey() { return slang::BufferID(); }
+  static slang::BufferID getTombstoneKey() {
+    return slang::BufferID(UINT32_MAX - 1, ""sv);
+    // UINT32_MAX is already used by `BufferID::getPlaceholder`.
+  }
+  static unsigned getHashValue(slang::BufferID id) {
+    return llvm::hash_value(id.getId());
+  }
+  static bool isEqual(slang::BufferID a, slang::BufferID b) { return a == b; }
+};
+} // namespace llvm
 
 // Parse the specified Verilog inputs into the specified MLIR context.
 mlir::OwningOpRef<mlir::ModuleOp> circt::importVerilog(SourceMgr &sourceMgr,
@@ -105,11 +129,22 @@ mlir::OwningOpRef<mlir::ModuleOp> circt::importVerilog(SourceMgr &sourceMgr,
   // now.
   slang::SourceManager slangSM;
   SmallVector<slang::SourceBuffer> slangBuffers;
+
+  // We keep a separate map from slang's buffers to the original MLIR file name
+  // since slang's `SourceLocation::getFileName` returns a modified version that
+  // is nice for human consumption (proximate paths, just file names, etc.), but
+  // breaks MLIR's assumption that the diagnostics report the exact file paths
+  // that appear in the `SourceMgr`. We use this separate map to lookup the
+  // exact paths and use those for reporting.
+  // See: https://github.com/MikePopoloski/slang/discussions/658
+  SmallDenseMap<slang::BufferID, StringRef> bufferFilePaths;
+
   for (unsigned i = 0, e = sourceMgr.getNumBuffers(); i < e; ++i) {
     const llvm::MemoryBuffer *buffer = sourceMgr.getMemoryBuffer(i + 1);
     auto slangBuffer =
         slangSM.assignText(buffer->getBufferIdentifier(), buffer->getBuffer());
     slangBuffers.push_back(slangBuffer);
+    bufferFilePaths.insert({slangBuffer.id, buffer->getBufferIdentifier()});
   }
 
   // Parse the input.
@@ -120,7 +155,8 @@ mlir::OwningOpRef<mlir::ModuleOp> circt::importVerilog(SourceMgr &sourceMgr,
 
   // Emit any diagnostics that got generated during parsing.
   slang::DiagnosticEngine diagEngine(slangSM);
-  auto diagClient = std::make_shared<MlirDiagnosticClient>(context);
+  auto diagClient = std::make_shared<MlirDiagnosticClient>(
+      context, [&](slang::BufferID id) { return bufferFilePaths.lookup(id); });
   diagEngine.addClient(diagClient);
   for (auto &diag : syntaxTree->diagnostics())
     diagEngine.issue(diag);
