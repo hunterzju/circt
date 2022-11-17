@@ -1,4 +1,4 @@
-// RUN: circt-translate --import-verilog --verify-diagnostics %s
+// RUN: circt-translate --import-verilog %s
 
 module Foo;
     bit [3:0] x;

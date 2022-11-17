@@ -10,28 +10,41 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "circt/Conversion/ImportVerilog.h"
+#include "ImportVerilogInternals.h"
 #include "circt/Dialect/Moore/MooreDialect.h"
-#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Support/Timing.h"
 #include "mlir/Tools/mlir-translate/Translation.h"
 #include "slang/diagnostics/DiagnosticClient.h"
-#include "slang/syntax/SyntaxTree.h"
-#include "slang/text/SourceManager.h"
 #include "slang/driver/Driver.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/Support/SourceMgr.h"
 
 using namespace circt;
+using namespace ImportVerilog;
 
 using llvm::SourceMgr;
 
 //===----------------------------------------------------------------------===//
 // Driver
 //===----------------------------------------------------------------------===//
+
+/// Convert a slang `SourceLocation` to an MLIR `Location`.
+Location ImportVerilog::convertLocation(
+    MLIRContext *context, const slang::SourceManager &sourceManager,
+    llvm::function_ref<StringRef(slang::BufferID)> getBufferFilePath,
+    slang::SourceLocation loc) {
+  if (loc.buffer() != slang::SourceLocation::NoLocation.buffer()) {
+    // auto fileName = sourceManager.getFileName(loc);
+    auto fileName = getBufferFilePath(loc.buffer());
+    auto line = sourceManager.getLineNumber(loc);
+    auto column = sourceManager.getColumnNumber(loc);
+    return FileLineColLoc::get(context, fileName, line, column);
+  }
+  return UnknownLoc::get(context);
+}
 
 namespace {
 /// A converter that can be plugged into a slang `DiagnosticEngine` as a client
@@ -71,14 +84,8 @@ public:
 
   /// Convert a slang `SourceLocation` to an MLIR `Location`.
   Location convertLocation(slang::SourceLocation loc) const {
-    if (loc.buffer() != slang::SourceLocation::NoLocation.buffer()) {
-      // auto fileName = sourceManager.getFileName(loc);
-      auto fileName = getBufferFilePath(loc.buffer());
-      auto line = sourceManager->getLineNumber(loc);
-      auto column = sourceManager->getColumnNumber(loc);
-      return FileLineColLoc::get(context, fileName, line, column);
-    }
-    return UnknownLoc::get(context);
+    return ImportVerilog::convertLocation(context, *sourceManager,
+                                          getBufferFilePath, loc);
   }
 
   static mlir::DiagnosticSeverity
@@ -135,9 +142,12 @@ mlir::OwningOpRef<mlir::ModuleOp> circt::importVerilog(SourceMgr &sourceMgr,
   // exact paths and use those for reporting.
   // See: https://github.com/MikePopoloski/slang/discussions/658
   SmallDenseMap<slang::BufferID, StringRef> bufferFilePaths;
+  auto getBufferFilePath = [&](slang::BufferID id) {
+    return bufferFilePaths.lookup(id);
+  };
 
-  auto diagClient = std::make_shared<MlirDiagnosticClient>(
-      context, [&](slang::BufferID id) { return bufferFilePaths.lookup(id); });
+  auto diagClient =
+      std::make_shared<MlirDiagnosticClient>(context, getBufferFilePath);
   driver.diagEngine.addClient(diagClient);
 
   // Populate the source manager with the source files.
@@ -171,7 +181,12 @@ mlir::OwningOpRef<mlir::ModuleOp> circt::importVerilog(SourceMgr &sourceMgr,
   context->loadDialect<moore::MooreDialect>();
   mlir::OwningOpRef<ModuleOp> module(
       ModuleOp::create(UnknownLoc::get(context)));
-  // TODO: Do AST traversal.
+  auto conversionTimer = ts.nest("Verilog to dialect mapping");
+  for (auto syntaxTree : compilation->getSyntaxTrees())
+    if (failed(convertSyntaxTree(*syntaxTree.get(), module.get(),
+                                 getBufferFilePath)))
+      return {};
+  conversionTimer.stop();
 
   // Run the verifier on the constructed module to ensure it is clean.
   auto verifierTimer = ts.nest("Post-parse verification");
