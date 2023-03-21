@@ -13,7 +13,13 @@ else ()
   # some other warnings we've seen
   add_compile_options(-Wno-c++98-compat-extra-semi)
   add_compile_options(-Wno-ctad-maybe-unsupported)
+  add_compile_options(-Wno-cast-qual)
 endif ()
+
+add_compile_options(-fexceptions)
+add_compile_options(-frtti)
+
+message(STATUS "cmake cxx flags: ${CMAKE_CXX_FLAGS}")
 
 add_circt_translation_library(CIRCTImportVerilog
   ConvertRoot.cpp
