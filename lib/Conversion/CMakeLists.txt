@@ -21,4 +21,5 @@ add_subdirectory(PipelineToHW)
 
 if(CIRCT_SLANG_FRONTEND_ENABLED)
   add_subdirectory(ImportVerilog)
+  add_subdirectory(VerilogToSV)
 endif()
