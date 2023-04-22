@@ -21,15 +21,23 @@ add_compile_options(-frtti)
 
 message(STATUS "cmake cxx flags: ${CMAKE_CXX_FLAGS}")
 
+add_subdirectory(SymbolConverter)
+
+message(STATUS "ast symbol sources: ${ASTSYM_CONVERT_SOURCES}")
+
 add_circt_translation_library(CIRCTVerilog2SV
-  ConvertRoot.cpp
-  Verilog2SV.cpp
+  ${ASTSYM_CONVERT_SOURCES}
+  VerilogToSV.cpp
 
   LINK_LIBS PUBLIC
   CIRCTSV
   MLIRTranslateLib
   PRIVATE
   slang::slang
+)
+
+target_include_directories(CIRCTVerilog2SV PRIVATE
+  SymbolConverter
 )
 
 # slang need the -DDEBUG definition while the circt gives -D_DEBUG.

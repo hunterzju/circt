@@ -13,6 +13,7 @@
 #ifndef CIRCT_CONVERSION_VERILOGTOSV_H
 #define CIRCT_CONVERSION_VERILOGTOSV_H
 
+#include "circt/Dialect/HW/HWOps.h"
 #include "circt/Support/LLVM.h"
 
 namespace llvm {
@@ -27,9 +28,9 @@ class TimingScope;
 namespace circt {
 
 /// Parse files in a source manager as Verilog source code.
-mlir::OwningOpRef<mlir::ModuleOp> verilog2SV(llvm::SourceMgr &sourceMgr,
-                                             mlir::MLIRContext *context,
-											 mlir::TimingScope &ts);
+mlir::OwningOpRef<ModuleOp> verilog2SV(llvm::SourceMgr &sourceMgr,
+                                       mlir::MLIRContext *context,
+                                       mlir::TimingScope &ts);
 
 /// Register the `Verilog2SV` MLIR translation.
 void registerVerilog2SVTranslation();

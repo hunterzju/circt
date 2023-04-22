@@ -10,8 +10,11 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Verilog2SVInternals.h"
 #include "circt/Conversion/VerilogToSV.h"
+#include "VerilogToSVInternals.h"
+#include "circt/Dialect/Comb/CombDialect.h"
+#include "circt/Dialect/HW/HWDialect.h"
+#include "circt/Dialect/HW/HWOps.h"
 #include "circt/Dialect/Moore/MooreDialect.h"
 #include "circt/Dialect/SV/SVDialect.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -21,6 +24,7 @@
 #include "mlir/Tools/mlir-translate/Translation.h"
 #include "slang/diagnostics/DiagnosticClient.h"
 #include "slang/driver/Driver.h"
+#include "slang/text/SourceManager.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/Support/SourceMgr.h"
 
@@ -46,6 +50,19 @@ Location Verilog2SV::convertLocation(
     return FileLineColLoc::get(context, fileName, line, column);
   }
   return UnknownLoc::get(context);
+}
+
+LogicalResult circt::Verilog2SV::convertAST(
+    const slang::ast::Symbol &symbol, ModuleOp module,
+    const slang::SourceManager &srcMgr,
+    llvm::function_ref<StringRef(slang::BufferID)> getBufferFilePath) {
+  SVASTVisitor astVisitor(module, module.getContext(),
+                          [&](slang::SourceLocation loc) {
+                            return convertLocation(module.getContext(), srcMgr,
+                                                   getBufferFilePath, loc);
+                          });
+  symbol.visit(astVisitor);
+  return astVisitor.result;
 }
 
 namespace {
@@ -87,7 +104,7 @@ public:
   /// Convert a slang `SourceLocation` to an MLIR `Location`.
   Location convertLocation(slang::SourceLocation loc) const {
     return Verilog2SV::convertLocation(context, *sourceManager,
-                                          getBufferFilePath, loc);
+                                       getBufferFilePath, loc);
   }
 
   static mlir::DiagnosticSeverity
@@ -129,9 +146,9 @@ struct DenseMapInfo<slang::BufferID> {
 } // namespace llvm
 
 // Parse the specified Verilog inputs into the specified MLIR context.
-mlir::OwningOpRef<mlir::ModuleOp> circt::verilog2SV(SourceMgr &sourceMgr,
-                                                       MLIRContext *context,
-                                                       mlir::TimingScope &ts) {
+mlir::OwningOpRef<ModuleOp> circt::verilog2SV(SourceMgr &sourceMgr,
+                                              MLIRContext *context,
+                                              mlir::TimingScope &ts) {
   // Use slang's driver which conveniently packages a lot of the things we need
   // for compilation.
   slang::driver::Driver driver;
@@ -145,6 +162,8 @@ mlir::OwningOpRef<mlir::ModuleOp> circt::verilog2SV(SourceMgr &sourceMgr,
   // See: https://github.com/MikePopoloski/slang/discussions/658
   SmallDenseMap<slang::BufferID, StringRef> bufferFilePaths;
   auto getBufferFilePath = [&](slang::BufferID id) {
+    if (!id.valid())
+      return StringRef();
     return bufferFilePaths.lookup(id);
   };
 
@@ -180,14 +199,18 @@ mlir::OwningOpRef<mlir::ModuleOp> circt::verilog2SV(SourceMgr &sourceMgr,
   compileTimer.stop();
 
   // Traverse the parsed Verilog AST and map it to the equivalent CIRCT ops.
-  context->loadDialect<circt::sv::SVDialect>();
+  context->loadDialect<circt::sv::SVDialect, circt::hw::HWDialect,
+                       circt::comb::CombDialect>();
   mlir::OwningOpRef<ModuleOp> module(
       ModuleOp::create(UnknownLoc::get(context)));
   auto conversionTimer = ts.nest("Verilog to dialect mapping");
-  for (auto syntaxTree : compilation->getSyntaxTrees())
-    if (failed(convertSyntaxTree(*syntaxTree.get(), module.get(),
-                                 getBufferFilePath)))
-      return {};
+  // convert AST tree.
+  slang::SourceManager &slangSrcMgr = driver.sourceManager;
+  if (failed(convertAST(compilation->getRoot(), module.get(), slangSrcMgr,
+                        getBufferFilePath))) {
+    mlir::emitError(UnknownLoc::get(context)) << "AST convertiosn fail";
+    return {};
+  }
   conversionTimer.stop();
 
   // Run the verifier on the constructed module to ensure it is clean.
@@ -203,5 +226,10 @@ void circt::registerVerilog2SVTranslation() {
       [](llvm::SourceMgr &sourceMgr, MLIRContext *context) {
         mlir::TimingScope ts;
         return verilog2SV(sourceMgr, context, ts);
+      },
+      [](mlir::DialectRegistry &registry) {
+        registry.insert<circt::hw::HWDialect>();
+        registry.insert<circt::comb::CombDialect>();
+        registry.insert<circt::sv::SVDialect>();
       });
 }
